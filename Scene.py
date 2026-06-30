@@ -481,7 +481,7 @@ class Scene:
 
         # Solve
         if method == 'pinv':
-            # Use 1% of max singular value as threshold — keeps physically meaningful
+            # Use 1% of max singular value as threshold, keeps physically meaningful
             # components only and avoids amplifying noise through near-zero singular values
             tol = 1e-2 * S[0]
             S_inv = np.where(S > tol, 1 / S, 0)
@@ -559,9 +559,7 @@ class Scene:
         rec_theta_0 = rec.get('theta_0', 0)
         n_beam_rec = rec.get('n_beam', 1)
 
-        # ============================================================
-        # RECEIVER BEAMFORMER: compute weights once
-        # ============================================================
+        # Compute weights for receiver beamformers
         rec_beamformer = rec.get('beamformer', 'none')
         rec_steer_angle = rec.get('steer_angle', 0)
 
@@ -597,7 +595,7 @@ class Scene:
                 w_rec_bf = steering / M_total  # Fallback to DAS
             print(f"  Receiver beamformer: MVDR @ {rec_steer_angle}°")
         else:
-            w_rec_bf = np.ones(M_total)  # Uniform (no beamforming) — no 1/M scaling
+            w_rec_bf = np.ones(M_total)  # Uniform (no beamforming)
 
         dV = self.stepsize ** 2
 
@@ -627,9 +625,7 @@ class Scene:
             A_src = np.zeros((M_total, N), dtype=complex)
             A_refl = np.zeros((M_total, N), dtype=complex) if reflection_coeff > 0 else None
 
-            # ============================================================
-            # SOURCE BEAMFORMER: Compute weight for this source
-            # ============================================================
+            # Compute source beamformer weights
             if beamformer_source == 'delay_and_sum':
                 if source_type == 'point':
                     rho_s = s['rho'] if isinstance(s, dict) else s
@@ -649,9 +645,7 @@ class Scene:
             else:
                 beam_weight_src = 1.0
 
-            # ============================================================
-            # Build matrix rows for this source
-            # ============================================================
+            # Build measurements matrix row-wise
             if source_type == 'point':
                 rho_s = s['rho'] if isinstance(s, dict) else s
 
@@ -701,9 +695,6 @@ class Scene:
             if reflection_coeff > 0:
                 A_src += A_refl
 
-            # ============================================================
-            # APPLY RECEIVER BEAMFORMER WEIGHTS TO THIS SOURCE BLOCK
-            # ============================================================
             # Weight each row (receiver) by the beamformer coefficient
             A_src_weighted = np.diag(w_rec_bf) @ A_src  # (M, M) @ (M, N) = (M, N)
 
@@ -757,8 +748,8 @@ class Scene:
         else:
             u_inc_dom = self.compute_incident_field(rho_dom)
 
-        # Rytov: linearize φ = ln(u_total/u_inc)
-        # The "data" becomes the complex phase: φ_R = ln(u_total/u_inc) at receivers
+        # Rytov: linearize phi = ln(u_total/u_inc)
+        # The data becomes the complex phase: phi_R = ln(u_total/u_inc) at receivers
         dV = self.stepsize ** 2
         A = np.zeros((M_total, N), dtype=complex)
 
@@ -784,7 +775,7 @@ class Scene:
 
         print(f"DBIM: {n_sources} sources, max {max_iter} iterations")
 
-        # Initial Born (single source to start clean)
+        # Initial Born for single source
         chi_k = self.solve_inverse(domain_name, receiver_name, method='tsvd', K=K,
                                    plot_svd=False, source_indices=source_indices)
         chi_k = np.maximum(chi_k, 0)  # positivity
@@ -803,7 +794,7 @@ class Scene:
             chi_2d[mask] = chi_k
             self.Chi = chi_2d
 
-            # Compute total field ONLY on domain points (much faster!)
+            # Compute total field ONLY on domain points
             rho_dom = self.rho_grid[mask]
             u_inc_dom = self.compute_incident_field(rho_dom)
 
@@ -835,11 +826,10 @@ class Scene:
                 u_total_dom = u_inc_dom
 
             # Build distorted A using total field on domain
-            # Use the working build_system_matrix but with a temp U_inc swap
             U_inc_temp = self.U_inc.copy()
             U_temp = np.zeros_like(self.U_inc, dtype=complex)
             U_temp[mask] = u_total_dom
-            self.U_inc = U_temp  # Trick: total field as "incident" for A building
+            self.U_inc = U_temp  # Consider total field as incident for building A
 
             A_distorted = self.build_system_matrix(domain_name, receiver_name,
                                                    method='born',
@@ -860,7 +850,7 @@ class Scene:
             from scipy.sparse.linalg import lsqr
             damping = 0.01
 
-            # Build regularized least squares: min ||A·δχ - residual||² + damping²||δχ||²
+            # Build regularized least squares
             A_aug = np.vstack([A_distorted, damping * np.eye(A_distorted.shape[1])])
             res_aug = np.concatenate([residual, np.zeros(A_distorted.shape[1])])
 
@@ -943,7 +933,7 @@ class Scene:
         3. MVDR → beamform receivers toward object
         4. Build A with MVDR weights → solve for chi
         """
-        # Step 1: Build data matrix X (each column = one source firing)
+        # Step 1: Build data matrix X (each column corresponds to one source)
         X, _ = self._build_esprit_data_matrix(receiver_name, source_indices)
 
         # Step 2: ESPRIT
@@ -971,10 +961,8 @@ class Scene:
         chi = self.solve_inverse(domain_name, receiver_name, method='tsvd', K=K,
                                  source_indices=source_indices)
 
-        # Clean up
         rec['_mvdr_weights'] = None
         rec['beamformer'] = 'none'
-
         return np.real(chi), steer_angle
 
     def _build_esprit_data_matrix(self, receiver_name, source_indices=None):
@@ -1033,7 +1021,7 @@ class Scene:
 
         u_sc_noisy = u_sc + noise
 
-        # Store as simple dict (not nested)
+        # Store as simple dict
         if not hasattr(self, 'U_sc_noisy'):
             self.U_sc_noisy = {}
         self.U_sc_noisy[receiver_name] = u_sc_noisy
@@ -1438,7 +1426,6 @@ class Scene:
         fig, ax = plt.subplots(1, 1, figsize=(10, 8))
         ax.set_aspect('equal')
 
-        # Derive scene width/height from ranges (replaces undefined self.xlim/self.ylim)
         scene_width = self.x_range[1] - self.x_range[0]
         scene_height = self.y_range[1] - self.y_range[0]
 
